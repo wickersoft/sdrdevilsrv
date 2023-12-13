@@ -177,6 +177,7 @@ void usage(void)
 		"\t[-p listen port (default: 1234)]\n"
 		"\t[-f frequency to tune to [Hz]]\n"
 		"\t[-g gain (default: 0 for auto)]\n"
+		"\t[-t don't use tuner amp (+11dB)]\n"
 		"\t[-s samplerate in Hz (default: 2048000 Hz)]\n"
 		"\t[-d device index (default: 0)]\n");
 	exit(1);
@@ -490,7 +491,7 @@ int main(int argc, char **argv)
 	int port = 1234;
 	long frequency = 443500000;
 	int samp_rate = 2800000;
-	uint8_t tuner_gain_enable = 0;
+	uint8_t tuner_gain_enable = 1;
 	struct sockaddr_in local, remote;
 	uint32_t dev_index = 0;
 	int gain = 0;
@@ -513,7 +514,7 @@ int main(int argc, char **argv)
 	struct sigaction sigact, sigign;
 #endif
 
-	while ((opt = getopt(argc, argv, "a:p:f:g:s:t:n:d:x")) != -1) {
+	while ((opt = getopt(argc, argv, "a:p:f:g:s:tn:d:x")) != -1) {
 		switch (opt) {
 		case 'd':
 			dev_index = atoi(optarg);
@@ -534,7 +535,7 @@ int main(int argc, char **argv)
 			port = atoi(optarg);
 			break;
 	    case 't':
-			tuner_gain_enable = 1;
+			tuner_gain_enable = 0;
 			break;
 		default:
 			usage();
