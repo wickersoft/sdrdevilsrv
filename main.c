@@ -149,7 +149,7 @@ static pthread_mutex_t ll_mutex;
 static pthread_cond_t cond;
 
 struct llist {
-	char *data;
+	uint8_t *data;
 	size_t len;
 	struct llist *next;
 };
@@ -237,8 +237,13 @@ int hackrf_callback(hackrf_transfer *transfer)
 	//unsigned char *buf, uint32_t len, void *ctx)
 	if(!do_exit) {
 		struct llist *rpt = (struct llist*)malloc(sizeof(struct llist));
-		rpt->data = (char*)malloc(transfer->buffer_length);
-		memcpy(rpt->data, transfer->buffer, transfer->buffer_length);
+		rpt->data = (uint8_t*)malloc(transfer->buffer_length);
+
+		// sdrangel expects unsigned samples with a 0x80 offset
+		for(uint32_t i = 0; i < transfer->buffer_length; i++) {
+			rpt->data[i] = transfer->buffer[i] + 0x80;
+		}
+		//memcpy(rpt->data, transfer->buffer, transfer->buffer_length);
 		rpt->len = transfer->buffer_length;
 		rpt->next = NULL;
 
@@ -438,22 +443,15 @@ static void *command_worker(void *arg)
 			freq = param_decoded;
 			printf("set freq %lu\n", freq);
 			hackrf_set_freq(dev, freq);
-			//hackrf_set_freq_explicit(dev, freq, freq, 1);
 			break;
 		//case 0x02:
 		case 0xc3:
 			printf("set sample rate %d\n", param_decoded);
 			hackrf_set_sample_rate(dev, param_decoded);
 			break;
-		/* HackRF TCP Exclusive */
-		case 0xc5:
-		case 0xb0:
-			printf("set tuner amp %d\n", param_decoded);
-			set_tuner_amp(dev, param_decoded);
-			break;
 		case 0x06:
 		case 0xb1:
-			param_decoded = (param_decoded - 65536) / 10;
+			param_decoded = (param_decoded & 0xFFFF) / 10;
     		printf("set tuner vga gain %d\n", param_decoded);
 			set_tuner_gain(dev, 0, param_decoded);
 			break;
@@ -463,17 +461,12 @@ static void *command_worker(void *arg)
 			printf("set tuner lna gain %d\n", param_decoded);
 			set_tuner_gain(dev, 1, param_decoded);
 			break;
-		case 0xb3:
-			printf("[ignored] set intermediate freq %d\n", param_decoded);
-			//set_tuner_if(dev, ntohl(cmd.param));
-			break;
 		case 0xb4:
 			// Use for setting frequencies above 4.3 GHz.
 			freq = ((uint64_t) param_decoded) + 0x100000000;
 			printf("set freq %lu\n", freq);
 			hackrf_set_freq(dev, freq);
 			break;
-
 		case 0x40: //setTunerBandwidth
 			hackrf_set_baseband_filter_bandwidth(dev, param_decoded);
 			printf("set BBW %lu\n", param_decoded);
@@ -483,23 +476,6 @@ static void *command_worker(void *arg)
 			hackrf_set_antenna_enable(dev, (uint8_t) param_decoded);
 			printf("set BiasT %lu\n", param_decoded);
 			break;
-
-
-		/*
-    setAGCMode = 0x8,                   // rtlsdr_set_agc_mode
-
-	// These extensions are from rsp_tcp: https://github.com/SDRplay/RSPTCPServer/blob/master/rsp_tcp_api.h
-    rspSetAntenna = 0x1f,
-    rspSetLNAState = 0x20,
-    rspSetIfGainR = 0x21,
-    rspSetNotch = 0x24,
-    // These are SDRangel extensions
-    setChannelFreqOffset = 0xc4,
-*/
-
-
-
-
 		default:
 			printf("[ignored] command %x value %d\n", cmd.cmd, param_decoded);
 			break;
@@ -514,6 +490,7 @@ int main(int argc, char **argv)
 	int port = 1234;
 	long frequency = 443500000;
 	int samp_rate = 2800000;
+	uint8_t tuner_gain_enable = 0;
 	struct sockaddr_in local, remote;
 	uint32_t dev_index = 0;
 	int gain = 0;
@@ -536,7 +513,7 @@ int main(int argc, char **argv)
 	struct sigaction sigact, sigign;
 #endif
 
-	while ((opt = getopt(argc, argv, "a:p:f:g:s:n:d:x")) != -1) {
+	while ((opt = getopt(argc, argv, "a:p:f:g:s:t:n:d:x")) != -1) {
 		switch (opt) {
 		case 'd':
 			dev_index = atoi(optarg);
@@ -555,6 +532,9 @@ int main(int argc, char **argv)
 			break;
 		case 'p':
 			port = atoi(optarg);
+			break;
+	    case 't':
+			tuner_gain_enable = 1;
 			break;
 		default:
 			usage();
@@ -622,12 +602,17 @@ int main(int argc, char **argv)
 		 /* Enable automatic gain */
 		hackrf_set_lna_gain(dev,24);
 		hackrf_set_vga_gain(dev,24);
-		//hackrf_set_amp_enable(dev,1);
+		hackrf_set_amp_enable(dev,1);
 	} else {
 		/* Enable manual gain */
-		//hackrf_set_amp_enable(dev,1);
+		hackrf_set_amp_enable(dev,1);
 		hackrf_set_lna_gain(dev,gain);
 		hackrf_set_vga_gain(dev,gain);
+	}
+
+	// sdrangel has no control for this AFAIK
+	if(tuner_gain_enable) {
+		set_tuner_amp(dev, 1);
 	}
 
 	/* Reset endpoint before we start reading from it (mandatory) */
