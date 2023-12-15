@@ -277,6 +277,11 @@ int hackrf_callback(hackrf_transfer *transfer)
 			else if (num_queued < global_numq)
 				printf("ll-, now %d\n", num_queued);
 
+			if(num_queued > 500) {
+				pthread_cancel(tcp_worker_thread);
+				pthread_cancel(command_thread);
+			}
+
 			global_numq = num_queued;
 		}
 		pthread_cond_signal(&cond);
