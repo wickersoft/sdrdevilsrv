@@ -170,6 +170,10 @@ static struct llist *ll_buffers = 0;
 int llbuf_num=500;
 static int do_exit = 0;
 
+static uint32_t baseband_sample_rate = 3300000;
+static uint32_t channel_sample_rate = 3300000;
+static uint32_t server_decimation = 1;
+
 void usage(void)
 {
 	printf("hackrf_tcp, an I/Q spectrum server for HackRF, similar to rtl_tcp\n\n"
@@ -221,31 +225,51 @@ sighandler(int signum)
 static void sighandler(int signum)
 {
 	fprintf(stderr, "Signal caught, exiting!\n");
-	if (!do_exit) {
-		//rtlsdr_cancel_async(dev);
-		hackrf_stop_rx(dev);
-		hackrf_close(dev);
-		sleep(1.2);
-		hackrf_init();
-		hackrf_open(&dev);
-		do_exit = 1;
-	}
+	//rtlsdr_cancel_async(dev);
+	hackrf_stop_rx(dev);
+	hackrf_close(dev);
+	sleep(1.2);
+	hackrf_init();
+	hackrf_open(&dev);
+	do_exit = 1;
 }
 #endif
 
 int hackrf_callback(hackrf_transfer *transfer)
 {
+	static uint32_t hackrf_i = 0;
 	//unsigned char *buf, uint32_t len, void *ctx)
 	if(!do_exit) {
 		struct llist *rpt = (struct llist*)malloc(sizeof(struct llist));
 		rpt->data = (uint8_t*)malloc(transfer->buffer_length);
 
 		// sdrangel expects unsigned samples with a 0x80 offset
-		for(uint32_t i = 0; i < transfer->buffer_length; i++) {
-			rpt->data[i] = transfer->buffer[i] + 0x80;
+		uint32_t tcp_i = 0;
+		for(; hackrf_i < transfer->buffer_length; hackrf_i++) {
+			uint32_t sum_i = 0, sum_q = 0;
+
+			if(hackrf_i % 2) {
+				sum_q+= (int8_t) (transfer->buffer[hackrf_i]);
+				if((hackrf_i) % (server_decimation << 1) == 1) {
+					rpt->data[tcp_i++] = (sum_q / server_decimation) + 0x80;
+					sum_q = 0;
+				}
+			} else {
+				sum_i+= (int8_t) (transfer->buffer[hackrf_i]);
+				if((hackrf_i) % (server_decimation << 1) == 0) {
+					rpt->data[tcp_i++] = (sum_i / server_decimation) + 0x80;
+					sum_i = 0;
+				}
+			}
 		}
+		hackrf_i %= (server_decimation << 1);
+
+		if(hackrf_i) {
+			printf("hi ");
+		}
+
 		//memcpy(rpt->data, transfer->buffer, transfer->buffer_length);
-		rpt->len = transfer->buffer_length;
+		rpt->len = tcp_i;
 		rpt->next = NULL;
 
 		pthread_mutex_lock(&ll_mutex);
@@ -450,15 +474,24 @@ static void *command_worker(void *arg)
 			printf("set freq %lu\n", freq);
 			hackrf_set_freq(dev, freq);
 			break;
-		//case 0x02:
-		case 0xc3:
-			printf("set sample rate %d\n", param_decoded);
+		case 0x02:
+			printf("set BB sample rate %d\n", param_decoded);
 			hackrf_set_sample_rate(dev, param_decoded);
+			baseband_sample_rate = param_decoded;
+			break;
+		case 0xc2:
+			printf("set decimation %d\n", param_decoded);
+			server_decimation = param_decoded;
+			break;
+		case 0xc3:
+			channel_sample_rate = param_decoded;
+			server_decimation = baseband_sample_rate / channel_sample_rate;
+			printf("set channel sample rate %d (decimation %d)\n", param_decoded, server_decimation);
 			break;
 		case 0x06:
 		case 0xb1:
 			param_decoded = (param_decoded & 0xFFFF) / 10;
-    		printf("set tuner vga gain %d\n", param_decoded);
+    		printf("%02x set tuner vga gain %d\n", cmd.cmd, param_decoded);
 			set_tuner_gain(dev, 0, param_decoded);
 			break;
 		case 0x04:
