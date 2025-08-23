@@ -264,10 +264,6 @@ int hackrf_callback(hackrf_transfer *transfer)
 		}
 		hackrf_i %= (server_decimation << 1);
 
-		if(hackrf_i) {
-			printf("hi ");
-		}
-
 		//memcpy(rpt->data, transfer->buffer, transfer->buffer_length);
 		rpt->len = tcp_i;
 		rpt->next = NULL;
@@ -480,13 +476,16 @@ static void *command_worker(void *arg)
 			baseband_sample_rate = param_decoded;
 			break;
 		case 0xc2:
-			printf("set decimation %d\n", param_decoded);
-			server_decimation = param_decoded;
+			server_decimation = 1 << (param_decoded <= 6 ? param_decoded : 6);
+			printf("set decimation %d\n", server_decimation);
 			break;
 		case 0xc3:
-			channel_sample_rate = param_decoded;
-			server_decimation = baseband_sample_rate / channel_sample_rate;
-			printf("set channel sample rate %d (decimation %d)\n", param_decoded, server_decimation);
+			channel_sample_rate = param_decoded == 0 ? 3300000 : param_decoded;
+			server_decimation = baseband_sample_rate / channel_sample_rate == 0 
+				? 1
+				: baseband_sample_rate / channel_sample_rate;
+				
+			printf("set channel sample rate %d (decimation %d)\n", channel_sample_rate, server_decimation);
 			break;
 		case 0x06:
 		case 0xb1:
@@ -508,12 +507,12 @@ static void *command_worker(void *arg)
 			break;
 		case 0x40: //setTunerBandwidth
 			hackrf_set_baseband_filter_bandwidth(dev, param_decoded);
-			printf("set BBW %lu\n", param_decoded);
+			printf("set BBW %d\n", param_decoded);
 		    break;
 		case 0x0e: //setBiasTee
 		case 0x25: //rspSetBiasT
 			hackrf_set_antenna_enable(dev, (uint8_t) param_decoded);
-			printf("set BiasT %lu\n", param_decoded);
+			printf("set BiasT %d\n", param_decoded);
 			break;
 		default:
 			printf("[ignored] command %x value %d\n", cmd.cmd, param_decoded);
